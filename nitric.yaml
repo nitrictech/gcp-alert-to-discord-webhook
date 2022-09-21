@@ -1,0 +1,3 @@
+name: gcp-alert-to-discord-webhook
+handlers:
+- main.go
