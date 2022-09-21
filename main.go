@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -23,7 +24,51 @@ var Environment RequiredEnv
 
 type webhook struct {
 	discordWebhook string
+	projectName    string
 }
+
+/*
+var foo = map[string]any{"incident": map[string]any{
+	"apigee_url": "http://www.example.com",
+	"condition": map[string]any{
+		"conditionThreshold": map[string]any{
+			"comparison":     "COMPARISON_GT",
+			"duration":       "0s",
+			"filter":         "metric.type=\"test.googleapis.com/metric\" resource.type=\"example_resource\"",
+			"thresholdValue": 0.5,
+			"trigger":        map[string]any{"count": 1}},
+		"displayName": "Example condition",
+		"name":        "projects/12345/alertPolicies/12345/conditions/12345",
+	},
+	"condition_name": "Example condition",
+	"documentation":  "Test documentation",
+	"ended_at":       0, "incident_id": "12345",
+	"metadata": map[string]any{
+		"system_labels": map[string]any{"example": "label"},
+		"user_labels":   map[string]any{"example": "label"}},
+	"metric": map[string]any{
+		"displayName": "Test Metric",
+		"labels":      map[string]any{"example": "label"},
+		"type":        "test.googleapis.com/metric"},
+	"observed_value":     "1.0",
+	"policy_name":        "projects/12345/alertPolicies/12345",
+	"policy_user_labels": map[string]any{"example": "label"},
+	"resource": map[string]any{
+		"labels": map[string]any{"example": "label"},
+		"type":   "example_resource"},
+	"resource_display_name":      "Example Resource",
+	"resource_id":                "12345",
+	"resource_name":              "projects/12345/example_resources/12345",
+	"resource_type_display_name": "Example Resource Type",
+	"scoping_project_id":         "12345",
+	"scoping_project_number":     12345,
+	"started_at":                 0,
+	"state":                      "OPEN",
+	"summary":                    "Test Incident",
+	"threshold_value":            "0.5",
+	"url":                        "http://www.example.com"},
+	"version": "test"}
+*/
 
 func (w *webhook) handleWebhook(hc *faas.HttpContext, hh faas.HttpHandler) (*faas.HttpContext, error) {
 	md := map[string]any{}
@@ -36,7 +81,15 @@ func (w *webhook) handleWebhook(hc *faas.HttpContext, hh faas.HttpHandler) (*faa
 		// assume not json
 		rd["content"] = string(hc.Request.Data())
 	} else {
-		rd["content"] = md
+		incident := md["incident"].(map[string]any)
+		fmt.Println("incident ", incident)
+
+		msgFmt := "New incident in %s\nView Error details %s\nAll Error reports https://console.cloud.google.com/errors?project=%s"
+
+		rd["content"] = fmt.Sprintf(msgFmt,
+			incident["resource_name"],
+			incident["url"],
+			w.projectName)
 	}
 
 	b, err := json.Marshal(rd)
@@ -58,12 +111,14 @@ func (w *webhook) handleWebhook(hc *faas.HttpContext, hh faas.HttpHandler) (*faa
 		Timeout: 10 * time.Second,
 	}
 
-	_, err = cli.Do(req)
+	resp, err := cli.Do(req)
 	if err != nil {
 		logrus.Info(err)
 		hc.Response.Status = http.StatusInternalServerError
 		return hh(hc)
 	}
+
+	fmt.Println("response ", resp.Status)
 
 	return hh(hc)
 }
@@ -79,10 +134,16 @@ func run() error {
 		return err
 	}
 
-	sw := &webhook{discordWebhook: Environment.StagingDiscordWebhook}
+	sw := &webhook{
+		discordWebhook: Environment.StagingDiscordWebhook,
+		projectName:    "nitric-deploy-staging",
+	}
 	mainAPI.Post("/staging", sw.handleWebhook)
 
-	pw := &webhook{discordWebhook: Environment.ProductionDiscordWebhook}
+	pw := &webhook{
+		discordWebhook: Environment.ProductionDiscordWebhook,
+		projectName:    "nitric-deploy-production",
+	}
 	mainAPI.Post("/production", pw.handleWebhook)
 
 	return resources.Run()
