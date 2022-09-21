@@ -1,0 +1,4 @@
+name: gcp
+provider: gcp
+region: australia-southeast1
+project: nitric-deploy-staging
