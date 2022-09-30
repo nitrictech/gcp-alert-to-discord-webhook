@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -17,7 +18,11 @@ import (
 
 type RequiredEnv struct {
 	ProductionDiscordWebhook string `envconfig:"PRODUCTION_DISCORD_WEBHOOK" required:"true"`
+	ProductionUsername       string `envconfig:"PRODUCTION_USERNAME" required:"true"`
+	ProductionPassword       string `envconfig:"PRODUCTION_PASSWORD" required:"true"`
 	StagingDiscordWebhook    string `envconfig:"STAGING_DISCORD_WEBHOOK" required:"true"`
+	StagingUsername          string `envconfig:"STAGING_USERNAME" required:"true"`
+	StagingPassword          string `envconfig:"STAGING_PASSWORD" required:"true"`
 }
 
 var Environment RequiredEnv
@@ -25,6 +30,8 @@ var Environment RequiredEnv
 type webhook struct {
 	discordWebhook string
 	projectName    string
+	username       string
+	password       string
 }
 
 /*
@@ -123,6 +130,32 @@ func (w *webhook) handleWebhook(hc *faas.HttpContext, hh faas.HttpHandler) (*faa
 	return hh(hc)
 }
 
+func (w *webhook) basicAuth(hc *faas.HttpContext, hh faas.HttpHandler) (*faas.HttpContext, error) {
+	r := http.Request{Header: hc.Request.Headers()}
+
+	authV, ok := r.Header["X-Forwarded-Authorization"]
+	if ok && strings.HasPrefix(authV[0], "Basic ") {
+		r.Header["Authorization"] = authV
+	}
+
+	u, p, ok := r.BasicAuth()
+	if !ok {
+		logrus.Info("auth not provided")
+		hc.Response.Status = http.StatusForbidden
+
+		return hc, errors.New("auth not provided")
+	}
+
+	if u != w.username || p != w.password {
+		logrus.Info("wrong auth")
+		hc.Response.Status = http.StatusForbidden
+
+		return hc, errors.New("wrong auth")
+	}
+
+	return hh(hc)
+}
+
 func run() error {
 	err := envconfig.Process("", &Environment)
 	if err != nil {
@@ -137,14 +170,18 @@ func run() error {
 	sw := &webhook{
 		discordWebhook: Environment.StagingDiscordWebhook,
 		projectName:    "nitric-deploy-staging",
+		username:       Environment.StagingUsername,
+		password:       Environment.StagingPassword,
 	}
-	mainAPI.Post("/staging", sw.handleWebhook)
+	mainAPI.Post("/staging", faas.ComposeHttpMiddlware(sw.basicAuth, sw.handleWebhook))
 
 	pw := &webhook{
 		discordWebhook: Environment.ProductionDiscordWebhook,
 		projectName:    "nitric-deploy-production",
+		username:       Environment.ProductionUsername,
+		password:       Environment.ProductionPassword,
 	}
-	mainAPI.Post("/production", pw.handleWebhook)
+	mainAPI.Post("/production", faas.ComposeHttpMiddlware(pw.basicAuth, pw.handleWebhook))
 
 	return resources.Run()
 }
