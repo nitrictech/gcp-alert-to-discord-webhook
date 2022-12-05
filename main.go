@@ -88,7 +88,14 @@ func (w *webhook) handleWebhook(hc *faas.HttpContext, hh faas.HttpHandler) (*faa
 		// assume not json
 		rd["content"] = string(hc.Request.Data())
 	} else {
-		incident := md["incident"].(map[string]any)
+		incident, ok := md["incident"].(map[string]any)
+		if !ok {
+			fmt.Println(md)
+			incident = map[string]any{
+				"resource_name": "Unknown resource",
+				"url":           "",
+			}
+		}
 		fmt.Println("incident ", incident)
 
 		msgFmt := "New incident in %s\nView Error details %s\nAll Error reports https://console.cloud.google.com/errors?project=%s"
